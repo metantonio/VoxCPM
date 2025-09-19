@@ -22,6 +22,7 @@ class VoxCPMDemo:
         self.asr_model_id = "iic/SenseVoiceSmall"
         self.asr_model: Optional[AutoModel] = AutoModel(
             model=self.asr_model_id,
+            trust_remote_code=True,
             disable_update=True,
             log_level='DEBUG',
             device="cuda:0" if self.device == "cuda" else "cpu",
@@ -86,7 +87,7 @@ class VoxCPMDemo:
         denoise: bool = True,
     ) -> Tuple[int, np.ndarray]:
         """
-        Generate speech from text using QLX; optional reference audio for voice style guidance.
+        Generate speech from text using VoxCPM; optional reference audio for voice style guidance.
         Returns (sample_rate, waveform_numpy)
         """
         current_model = self.get_or_load_voxcpm()
@@ -114,10 +115,7 @@ class VoxCPMDemo:
 # ---------- UI Builders ----------
 
 def create_demo_interface(demo: VoxCPMDemo):
-    """Build the Gradio UI for QLX demo."""
-    # static assets (logo path)
-    gr.set_static_paths(paths=[Path.cwd().absolute()/"assets"])
-
+    """Build the Gradio UI for VoxCPM demo."""
     with gr.Blocks(
         theme=gr.themes.Soft(
             primary_hue="blue",
@@ -126,127 +124,106 @@ def create_demo_interface(demo: VoxCPMDemo):
             font=[gr.themes.GoogleFont("Inter"), "Arial", "sans-serif"]
         ),
         css="""
-        .logo-container {
+        body { font-family: 'Inter', sans-serif; }
+        .logo-wrapper {
             text-align: center;
-            margin: 0.5rem 0 1rem 0;
+            margin: 1rem 0;
         }
-        .logo-container img {
-            height: 80px;
+        .logo-wrapper img {
+            height: 60px;
             width: auto;
-            max-width: 200px;
-            display: inline-block;
         }
-        /* Bold accordion labels */
-        #acc_quick details > summary,
-        #acc_tips details > summary {
-            font-weight: 600 !important;
-            font-size: 1.1em !important;
-        }
-        /* Bold labels for specific checkboxes */
-        #chk_denoise label,
-        #chk_denoise span,
-        #chk_normalize label,
-        #chk_normalize span {
-            font-weight: 600;
-        }
+        #main-title { text-align: center; font-size: 2.2rem; font-weight: 600; margin-bottom: 0.5rem; }
+        #subtitle { text-align: center; font-size: 1rem; color: #6B7280; margin-bottom: 2rem; }
+        .gradio-container { max-width: 960px !important; margin: auto !important; }
+        #generate_button { height: 50px; }
+        #acc_advanced details > summary, #acc_quick details > summary, #acc_tips details > summary { font-weight: 600 !important; font-size: 1.1em !important; }
+        .gr-group { border-radius: 10px !important; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06) !important; }
+        footer { display: none !important }
         """
     ) as interface:
-        # Header logo
-        gr.HTML('<div class="logo-container"><img src="/gradio_api/file=assets/qlx_logo.png" alt="VoxCPM Logo"></div>')
+        # Header
+        gr.Image(
+            "assets/qlx_logo.png",
+            elem_classes="logo-wrapper",
+            show_label=False,
+            show_download_button=False,
+            interactive=False,
+            container=False,
+        )
+        gr.Markdown("# QLX: High-Quality Text-to-Speech", elem_id="main-title")
+        gr.Markdown("Clone a voice from a short audio clip and generate speech from any text.", elem_id="subtitle")
+
+        with gr.Row():
+            with gr.Column(scale=1, min_width=320):
+                with gr.Group():
+                    gr.Markdown("### 1. Provide a Voice Prompt")
+                    prompt_wav = gr.Audio(
+                        sources=["upload", 'microphone'],
+                        type="filepath",
+                        label="Upload or Record Audio (3-10s recommended)",
+                        value="./examples/example.wav",
+                    )
+                    prompt_text = gr.Textbox(
+                        value="Just by listening a few minutes a day, you'll be able to eliminate negative thoughts by conditioning your mind to be more positive.",
+                        label="Prompt Text",
+                        info="The transcript of the audio prompt. It will be auto-filled on audio upload.",
+                        placeholder="Please enter the prompt text..."
+                    )
+
+            with gr.Column(scale=1, min_width=320):
+                with gr.Group():
+                    gr.Markdown("### 2. Enter Target Text")
+                    text = gr.Textbox(
+                        value="Qualex is a company that brings insights in your data.",
+                        label="Text to Synthesize",
+                        lines=5,
+                        placeholder="Enter the text you want the model to speak.",
+                    )
+
+        with gr.Accordion("Advanced Settings", open=False, elem_id="acc_advanced"):
+            with gr.Row():
+                with gr.Column():
+                    cfg_value = gr.Slider(minimum=1.0, maximum=3.0, value=2.0, step=0.1, label="CFG Value", info="Higher values enhance prompt adherence; lower values boost creativity.")
+                    inference_timesteps = gr.Slider(minimum=4, maximum=30, value=10, step=1, label="Inference Timesteps", info="More steps may improve quality but increase generation time.")
+                with gr.Column(min_width=200):
+                    DoNormalizeText = gr.Checkbox(value=False, label="Normalize Input Text", info="Use WeTextProcessing for text normalization.", elem_id="chk_normalize")
+                    DoDenoisePromptAudio = gr.Checkbox(value=False, label="Enhance Prompt Audio", info="Use ZipEnhancer to denoise the prompt audio.", elem_id="chk_denoise")
+
+        run_btn = gr.Button("Generate Speech", variant="primary", elem_id="generate_button")
+
+        gr.Markdown("### 3. Get Your Audio")
+        audio_output = gr.Audio(label="Output Audio")
 
         # Quick Start
         with gr.Accordion("📋 Quick Start Guide", open=False, elem_id="acc_quick"):
             gr.Markdown("""
             ### How to Use
-            1. **(Optional) Provide a Voice Prompt** - Upload or record an audio clip to provide the desired voice characteristics for synthesis.  
-             
-            2. **(Optional) Enter prompt text** - If you provided a voice prompt, enter the corresponding transcript here (auto-recognition available).  
-              
-            3. **Enter target text** - Type the text you want the model to speak.  
-            
-            4. **Generate Speech** - Click the "Generate" button to create your audio.  
-              
+            1. **(Optional) Provide a Voice Prompt** - Upload or record an audio clip to provide the desired voice characteristics for synthesis.
+            2. **(Optional) Enter prompt text** - If you provided a voice prompt, enter the corresponding transcript here (auto-recognition available).
+            3. **Enter target text** - Type the text you want the model to speak.
+            4. **Generate Speech** - Click the "Generate" button to create your audio.
             """)
 
         # Pro Tips
         with gr.Accordion("💡 Pro Tips", open=False, elem_id="acc_tips"):
             gr.Markdown("""
             ### Prompt Speech Enhancement
-            - **Enable** to remove background noise for a clean, studio-like voice, with an external ZipEnhancer component.  
-              
-            - **Disable** to preserve the original audio's background atmosphere.  
-              
+            - **Enable** to remove background noise for a clean, studio-like voice, with an external ZipEnhancer component.
+            - **Disable** to preserve the original audio's background atmosphere.
 
             ### Text Normalization
-            - **Enable** to process general text with an external WeTextProcessing component.  
-              
-            - **Disable** to use QLX's native text understanding ability. For example, it supports phonemes input ({HH AH0 L OW1}), try it!  
+            - **Enable** to process general text with an external WeTextProcessing component.
+            - **Disable** to use VoxCPM's native text understanding ability. For example, it supports phonemes input ({HH AH0 L OW1}), try it!
 
             ### CFG Value
-            - **Lower CFG** if the voice prompt sounds strained or expressive.  
-            
-            - **Higher CFG** for better adherence to the prompt speech style or input text.  
-             
+            - **Lower CFG** if the voice prompt sounds strained or expressive.
+            - **Higher CFG** for better adherence to the prompt speech style or input text.
 
             ### Inference Timesteps
-            - **Lower** for faster synthesis speed.  
-            
-            - **Higher** for better synthesis quality.  
+            - **Lower** for faster synthesis speed.
+            - **Higher** for better synthesis quality.
             """)
-
-        # Main controls
-        with gr.Row():
-            with gr.Column():
-                prompt_wav = gr.Audio(
-                    sources=["upload", 'microphone'],
-                    type="filepath",
-                    label="Prompt Speech (Optional, or let QLX improvise)",
-                    value="./examples/example.wav",
-                )
-                DoDenoisePromptAudio = gr.Checkbox(
-                    value=False,
-                    label="Prompt Speech Enhancement",
-                    elem_id="chk_denoise",
-                    info="We use ZipEnhancer model to denoise the prompt audio."
-                )
-                with gr.Row():
-                    prompt_text = gr.Textbox(
-                        value="Just by listening a few minutes a day, you'll be able to eliminate negative thoughts by conditioning your mind to be more positive.",
-                        label="Prompt Text",
-                        placeholder="Please enter the prompt text. Automatic recognition is supported, and you can correct the results yourself..."
-                    )
-                run_btn = gr.Button("Generate Speech", variant="primary")
-
-            with gr.Column():
-                cfg_value = gr.Slider(
-                    minimum=1.0,
-                    maximum=3.0,
-                    value=2.0,
-                    step=0.1,
-                    label="CFG Value (Guidance Scale)",
-                    info="Higher values increase adherence to prompt, lower values allow more creativity"
-                )
-                inference_timesteps = gr.Slider(
-                    minimum=4,
-                    maximum=30,
-                    value=10,
-                    step=1,
-                    label="Inference Timesteps",
-                    info="Number of inference timesteps for generation (higher values may improve quality but slower)"
-                )
-                with gr.Row():
-                    text = gr.Textbox(
-                        value="Qualex is a company that brings insights in your data.",
-                        label="Target Text",
-                    )
-                with gr.Row():
-                    DoNormalizeText = gr.Checkbox(
-                        value=False,
-                        label="Text Normalization",
-                        elem_id="chk_normalize",
-                        info="We use wetext library to normalize the input text."
-                    )
-                audio_output = gr.Audio(label="Output Audio")
 
         # Wiring
         run_btn.click(
